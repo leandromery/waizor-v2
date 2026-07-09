@@ -65,6 +65,30 @@ const SECURITY_HEADERS = [
 
 const nextConfig: NextConfig = {
   /**
+   * Standalone output.
+   *
+   * Emits `.next/standalone` — a self-contained server bundle with a
+   * minimal `server.js` and only the `node_modules` actually reached at
+   * runtime. The Dockerfile copies this (plus `.next/static` and
+   * `public`) into a slim runner image instead of shipping the full
+   * dependency tree. See node_modules/next/dist/docs/01-app/
+   * 01-getting-started/17-deploying.md (Docker / standalone).
+   */
+  output: "standalone",
+
+  /**
+   * Pin the output-file-tracing root to this project.
+   *
+   * Without this, Next walks up looking for a lockfile and can pick an
+   * ancestor directory as the trace root (a sibling project's
+   * package-lock.json is enough). The standalone bundle then lands at
+   * `.next/standalone/<absolute/project/path>/server.js` instead of
+   * `.next/standalone/server.js`, breaking the Dockerfile's COPY. Pin
+   * it so the layout is identical on every machine and in CI.
+   */
+  outputFileTracingRoot: import.meta.dirname,
+
+  /**
    * Cache-Control policy.
    *
    * Why this exists:
