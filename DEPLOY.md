@@ -1,50 +1,41 @@
 # Deploy — waizor-v2 em `v2.waizor.com.br`
 
-Guia para publicar o app numa VPS com **Docker Compose**, atrás de **Nginx + Certbot**.
-O banco é **Supabase Cloud** (`vgyepacjxciicqylurxd.supabase.co`) — não roda na VPS.
+A VPS já roda um cluster **Docker Swarm** com **Traefik** como reverse proxy
+(TLS automático via Let's Encrypt, HTTP challenge). O waizor-v2 é publicado
+como **serviço Swarm** na rede overlay existente `minha_rede`, exposto por
+**labels do Traefik** — o mesmo padrão dos outros serviços (ex.: `evo_gateway`
+→ `api-crm.waizor.com.br`).
 
-Arquivos deste repo usados no deploy:
+> **Não** instale Nginx/Certbot no host: o Traefik já é dono de `:80/:443`.
+> O banco é **Supabase Cloud** (`vgyepacjxciicqylurxd.supabase.co`).
+
+Arquivos usados no deploy:
 
 | Arquivo | Função |
 |---|---|
 | `Dockerfile` | Imagem de produção (Next.js standalone, multi-stage) |
-| `docker-compose.yml` | Sobe o container `app` em `127.0.0.1:3000` |
+| `docker-compose.yml` | **Builder** da imagem `waizor-v2:latest` (bake dos `NEXT_PUBLIC_*`) |
+| `deploy/stack.yml` | Serviço Swarm + labels do Traefik |
 | `.env.production.example` | Template → copiar para `.env` no servidor |
-| `deploy.sh` | `git pull` + rebuild + restart |
-| `deploy/nginx/v2.waizor.com.br.conf` | Vhost do Nginx |
+| `deploy.sh` | `git pull` + rebuild + `stack deploy` |
 | `deploy/cron-ping.sh` | Pinger dos endpoints de cron |
 
 ---
 
 ## 1. DNS
 
-No painel do domínio `waizor.com.br`, crie:
+No painel de `waizor.com.br`, crie:
 
 ```
 Tipo  Nome  Valor            TTL
-A     v2    <IP_DA_VPS>      300
+A     v2    212.56.33.124    300
 ```
 
-Confirme a propagação:
+Confirme: `dig +short v2.waizor.com.br` → `212.56.33.124`.
+O Traefik emite o certificado sozinho no primeiro acesso (HTTP challenge),
+então o DNS precisa estar propagado **antes** do deploy.
 
-```bash
-dig +short v2.waizor.com.br
-```
-
-## 2. Pré-requisitos na VPS
-
-```bash
-# Docker + Compose plugin (Ubuntu/Debian)
-curl -fsSL https://get.docker.com | sh
-sudo apt-get install -y docker-compose-plugin nginx certbot python3-certbot-nginx
-
-# Firewall
-sudo ufw allow OpenSSH
-sudo ufw allow 80,443/tcp
-sudo ufw enable
-```
-
-## 3. Código
+## 2. Código na VPS
 
 ```bash
 sudo mkdir -p /opt/waizor-v2 && sudo chown "$USER" /opt/waizor-v2
@@ -52,50 +43,46 @@ git clone https://github.com/leandromery/waizor-v2.git /opt/waizor-v2
 cd /opt/waizor-v2
 ```
 
-> Repo privado: use um **deploy key** SSH (`git clone git@github.com:...`) ou um
-> Personal Access Token na URL HTTPS.
+> Repo privado: use deploy key SSH ou um PAT na URL HTTPS.
 
-## 4. Variáveis de ambiente
+## 3. Variáveis de ambiente
 
 ```bash
 cp .env.production.example .env
 nano .env   # preencher os valores reais
 ```
 
-Chaves obrigatórias (ver `.env.production.example` para detalhes):
+Chaves obrigatórias (ver `.env.production.example`):
 
-- `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (Supabase → Settings → API)
+- `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `NEXT_PUBLIC_SITE_URL=https://v2.waizor.com.br`
 - `NEXT_PUBLIC_APP_LOCALE=pt`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `ENCRYPTION_KEY` — `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
-  ⚠️ **Reutilize o mesmo valor já em uso** se já existem tokens de WhatsApp salvos; trocar orfana os tokens.
+  ⚠️ **Reutilize o mesmo valor** se já existem tokens de WhatsApp salvos; trocar orfana os tokens.
 - `META_APP_SECRET`, `META_APP_ID`
 - `AUTOMATION_CRON_SECRET` — `openssl rand -hex 32`
 - `ALLOWED_INVITE_HOSTS=v2.waizor.com.br`
 
-## 5. Build e subida
+## 4. Build + deploy
 
 ```bash
-docker compose up -d --build
-docker compose logs -f app     # conferir que subiu sem erro de env
-curl -I http://127.0.0.1:3000  # deve responder 200/3xx localmente
+# 1) Build da imagem (Compose lê .env e injeta os NEXT_PUBLIC_* como build args)
+docker compose build
+
+# 2) Deploy do serviço Swarm (exporta o .env para interpolar os secrets)
+set -a; . ./.env; set +a
+docker stack deploy -c deploy/stack.yml waizor
+
+# 3) Acompanhar
+docker service ps waizor_app --no-trunc
+docker service logs -f waizor_app
 ```
 
-## 6. Nginx + SSL
+O Traefik detecta o serviço pelas labels e passa a rotear
+`https://v2.waizor.com.br` → container:3000, emitindo o TLS.
 
-```bash
-sudo cp deploy/nginx/v2.waizor.com.br.conf /etc/nginx/sites-available/
-sudo ln -s /etc/nginx/sites-available/v2.waizor.com.br.conf /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
-
-# Emite o certificado e reescreve o vhost para HTTPS + redirect
-sudo certbot --nginx -d v2.waizor.com.br
-```
-
-Renovação é automática (timer do certbot). Teste: `sudo certbot renew --dry-run`.
-
-## 7. Cron das automações
+## 5. Cron das automações
 
 Necessário se usar passos "Wait" em automações ou flows agendados.
 
@@ -111,7 +98,7 @@ crontab -e
 ## Configuração fora do servidor
 
 ### Supabase
-- **Migrations**: confirmar que as 35 migrations de `supabase/migrations/` estão aplicadas no projeto cloud. Se não:
+- **Migrations**: confirmar que as migrations de `supabase/migrations/` estão aplicadas no projeto cloud. Se não:
   ```bash
   supabase link --project-ref vgyepacjxciicqylurxd
   supabase db push
@@ -134,8 +121,9 @@ cd /opt/waizor-v2
 
 ## Verificação end-to-end
 
-1. `curl -I https://v2.waizor.com.br` → 200 + TLS válido.
-2. Abrir no browser: estilos carregam (sem 404 em `/_next/static/*`), login funciona.
-3. Dashboard (`/inbox`, `/contacts`, `/pipelines`) renderiza após login.
-4. Mensagem de teste no WhatsApp → webhook recebe (`docker compose logs -f app`).
-5. Reboot da VPS → container volta sozinho (`restart: unless-stopped`).
+1. `dig +short v2.waizor.com.br` → `212.56.33.124`.
+2. `curl -I https://v2.waizor.com.br` → 200 + TLS válido (emitido pelo Traefik).
+3. Browser: estilos carregam (sem 404 em `/_next/static/*`), login funciona.
+4. Dashboard (`/inbox`, `/contacts`, `/pipelines`) renderiza após login.
+5. Mensagem de teste no WhatsApp → webhook recebe (`docker service logs -f waizor_app`).
+6. `docker service ls | grep waizor` → `1/1` réplicas.

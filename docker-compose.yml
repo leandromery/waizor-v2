@@ -1,15 +1,16 @@
-# waizor-v2 — production stack
+# waizor-v2 — image builder (NOT the runtime).
 #
-# The app runs as a single container. Nginx + Certbot live on the HOST
-# and reverse-proxy https://v2.waizor.com.br → 127.0.0.1:3000.
+# This VPS runs Docker Swarm behind Traefik, so the app is deployed as a
+# Swarm service (see deploy/stack.yml), which cannot build images itself.
+# This compose file exists only to BUILD `waizor-v2:latest`, baking the
+# NEXT_PUBLIC_* values (Compose auto-loads `.env` and interpolates them
+# into the build args below).
 #
-# A single `.env` file (created only on the server from
-# .env.production.example, never committed) supplies BOTH:
-#   - build args: Compose auto-loads `.env` and interpolates the
-#     NEXT_PUBLIC_* values below (interpolation only reads `.env`, not
-#     env_file — that is why one `.env` is used for everything).
-#   - runtime env: SUPABASE_SERVICE_ROLE_KEY, ENCRYPTION_KEY, META_*, etc.
-#     (loaded via env_file into the running container).
+#   docker compose build          # -> waizor-v2:latest
+#   docker stack deploy -c deploy/stack.yml waizor
+#
+# There is intentionally no `ports:` mapping — Traefik reaches the
+# container over the `minha_rede` overlay network, not via a host port.
 
 services:
   app:
@@ -22,9 +23,3 @@ services:
         NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL}
         NEXT_PUBLIC_APP_LOCALE: ${NEXT_PUBLIC_APP_LOCALE}
     image: waizor-v2:latest
-    container_name: waizor-v2
-    env_file: .env
-    # Bind to loopback only — nginx on the host is the public entrypoint.
-    ports:
-      - "127.0.0.1:3000:3000"
-    restart: unless-stopped
