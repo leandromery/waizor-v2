@@ -111,8 +111,60 @@ Driven by `provider.capabilities`, not scattered `if`s. Templates subsystem + br
 - **Phase 1 (no vendor docs needed):** migration, provider interface + registry, Meta wrapper, outbound routing, inbound-core extraction, settings selector + gating. Carries all the "don't break Meta" risk.
 - **Phase 2 (needs UAZAPI docs):** `providers/uazapi.ts` internals, connect/QR/status routes, UAZAPI webhook, UAZAPI QR UI.
 
-## Open items — need UAZAPI docs before Phase 2
+## Phase 2 — concrete UAZAPI API mapping
 
-- Endpoints/fields for: instance create + QR, status polling, send text, send media, send interactive (and whether interactive is supported at all).
-- Inbound webhook payload shape + how it authenticates callbacks to us.
-- Media delivery form (hosted URL vs base64) → dictates §3 media resolution.
+Source spec: `uazapiGO - WhatsApp API` v2.1.1 (local copy:
+`~/Downloads/uazapi-openapi-spec.yaml`). Server: `https://{subdomain}.uazapi.com`.
+Auth headers: `admintoken` (create instance) and `token` (all per-instance ops).
+
+**Connection lifecycle**
+- `POST /instance/create` (admintoken) → `{ instance: { id, token, status, qrcode } }`.
+  Persist `uazapi_instance_id` = `instance.id`, encrypt `instance.token` →
+  `uazapi_instance_token`.
+- `POST /instance/connect` (token) → `{ instance: { qrcode, status, paircode } }`.
+  `qrcode` is base64 to render.
+- `GET /instance/status` (token) → `{ instance: { status, profileName, owner },
+  status: { connected, loggedIn, jid } }`. status enum:
+  `disconnected | connecting | connected | hibernated`.
+- `POST /instance/disconnect` (token). `DELETE /instance` removes it.
+
+**Outbound** (token) — all take `number` + optional `replyid` (→ contextMessageId):
+- `POST /send/text` — `{ number, text }`.
+- `POST /send/media` — `{ number, type: image|video|document|audio|ptt, file (URL or
+  base64), text (caption), docName }`.
+- `POST /send/menu` — `{ number, type: button|list, text, footerText, listButton,
+  choices[] }`. NOTE: `choices` are strings (`[Title]` marks list sections) with **no
+  per-option stable id** — map our button/row titles to choices; on reply the selected
+  id comes back as `buttonOrListid` (see inbound).
+- Send response = `Message` schema + `{ response: { status, message } }`. Return
+  `messageid` (original provider id) as our `messageId`.
+
+**Inbound** — `POST /webhook` (token) `{ action:'add', enabled:true, url, events:['message'] }`
+points UAZAPI at `/api/whatsapp/uazapi/webhook`. Event envelope `WebhookEvent`:
+`{ event: 'message'|'status'|..., instance: <id>, data: <Message> }`. Resolve the
+account by `instance` → `uazapi_instance_id`. `Message` → NormalizedInbound:
+
+| NormalizedInbound | UAZAPI `Message` field |
+|---|---|
+| providerMessageId | `messageid` |
+| fromPhone | `sender` (strip JID suffix, then normalizePhone) |
+| contactName | `senderName` |
+| timestampSeconds | `messageTimestamp` / 1000 (ms → s) |
+| typeLabel / contentType | `messageType` (map to allowed set) |
+| contentText | `text` |
+| mediaUrl | `fileURL` (already a URL — no Meta-style download) |
+| interactiveReplyId | `buttonOrListid` |
+| replyToProviderMessageId | `quoted` |
+| reaction | `reaction` (target id) + emoji from `text` |
+
+**Must skip** inbound events where `fromMe === true` (our own echoed sends) or
+`isGroup === true` (CRM is 1:1) — Meta's webhook never delivered these; the UAZAPI
+normalizer/route must filter them before calling `processInboundMessage`.
+
+**Open confirmations for implementation**
+- Whether `replyid` / `quoted` use `id` (internal `r+hex`) or `messageid`; standardize
+  what we store in `messages.message_id` accordingly.
+- Webhook callback authentication (UAZAPI → us): confirm whether it signs requests or
+  we rely on the unguessable instance-scoped URL / a shared secret.
+- `fileURL` access: whether it needs the instance token to fetch (→ proxy like Meta) or
+  is publicly retrievable.
