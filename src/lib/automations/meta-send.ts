@@ -1,10 +1,9 @@
-import { sendTextMessage, sendTemplateMessage } from '@/lib/whatsapp/meta-api'
 import type { InteractiveMessagePayload } from '@/lib/whatsapp/interactive'
 import {
   engineSendInteractiveButtons,
   engineSendInteractiveList,
 } from '@/lib/flows/meta-send'
-import { decrypt } from '@/lib/whatsapp/encryption'
+import { getProvider } from '@/lib/whatsapp/providers'
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -140,13 +139,17 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     throw new Error('WhatsApp not configured for this account')
   }
 
-  const accessToken = decrypt(config.access_token)
+  const provider = getProvider(config)
+  const ctx = { config, db }
 
   const attempt = async (phone: string): Promise<string> => {
     if (input.kind === 'template') {
-      const r = await sendTemplateMessage({
-        phoneNumberId: config.phone_number_id,
-        accessToken,
+      if (!provider.sendTemplate) {
+        throw new Error(
+          `Templates are not supported by the ${provider.id} provider.`
+        )
+      }
+      const r = await provider.sendTemplate(ctx, {
         to: phone,
         templateName: input.templateName,
         language: input.language,
@@ -154,12 +157,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       })
       return r.messageId
     }
-    const r = await sendTextMessage({
-      phoneNumberId: config.phone_number_id,
-      accessToken,
-      to: phone,
-      text: input.text,
-    })
+    const r = await provider.sendText(ctx, { to: phone, text: input.text })
     return r.messageId
   }
 

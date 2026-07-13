@@ -1,0 +1,38 @@
+# Dependencies & build output (rebuilt inside the image)
+node_modules
+.next
+out
+
+# Env & secrets — never copy into the image; runtime uses env_file
+.env
+.env.*
+!.env.production.example
+
+# VCS & CI
+.git
+.github
+.gitignore
+
+# Supabase (migrations run against the cloud DB, not from the image)
+supabase
+
+# Local tooling / editor
+.vscode
+.idea
+.claude
+*.log
+npm-debug.log*
+
+# Docs & meta
+*.md
+docs
+CHANGELOG.md
+LICENSE
+
+# Tests
+**/*.test.ts
+**/*.test.tsx
+vitest.config.ts
+
+# OS cruft
+.DS_Store

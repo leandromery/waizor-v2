@@ -1,0 +1,54 @@
+# waizor-v2 — Docker Swarm stack for v2.waizor.com.br
+#
+# This VPS already runs a Swarm cluster with Traefik as the reverse proxy
+# (Let's Encrypt via HTTP challenge). We DO NOT use host Nginx/Certbot —
+# Traefik owns :80/:443. waizor-v2 joins the existing `minha_rede` overlay
+# network and is exposed through Traefik labels, exactly like the other
+# services (e.g. evo_gateway → api-crm.waizor.com.br).
+#
+# Deploy (from the repo root on the VPS, e.g. /opt/waizor-v2):
+#   docker compose build                       # builds waizor-v2:latest (bakes NEXT_PUBLIC_*)
+#   set -a; . ./.env; set +a                    # export runtime secrets for interpolation
+#   docker stack deploy -c deploy/stack.yml waizor
+#
+# Swarm ignores `build:` and `env_file:`, so the image is built beforehand
+# (docker-compose.yml is the builder) and secrets are injected via
+# `environment:` interpolated from the exported .env.
+
+version: "3.8"
+
+services:
+  app:
+    image: waizor-v2:latest
+    environment:
+      NODE_ENV: production
+      # Baked into the client bundle at build time; also read server-side.
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL}
+      NEXT_PUBLIC_APP_LOCALE: ${NEXT_PUBLIC_APP_LOCALE}
+      # Server-only secrets.
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      META_APP_SECRET: ${META_APP_SECRET}
+      META_APP_ID: ${META_APP_ID}
+      AUTOMATION_CRON_SECRET: ${AUTOMATION_CRON_SECRET}
+      ALLOWED_INVITE_HOSTS: ${ALLOWED_INVITE_HOSTS}
+    networks:
+      - minha_rede
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.waizor.rule=Host(`v2.waizor.com.br`)"
+        - "traefik.http.routers.waizor.entrypoints=websecure"
+        - "traefik.http.routers.waizor.tls.certresolver=letsencryptresolver"
+        - "traefik.http.services.waizor.loadbalancer.server.port=3000"
+        - "traefik.http.services.waizor.loadbalancer.passHostHeader=true"
+        - "traefik.swarm.network=minha_rede"
+
+networks:
+  minha_rede:
+    external: true

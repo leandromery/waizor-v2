@@ -21,20 +21,13 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import {
-  sendTextMessage,
-  sendTemplateMessage,
-  sendMediaMessage,
-  sendInteractiveButtons,
-  sendInteractiveList,
-  type MediaKind,
-} from '@/lib/whatsapp/meta-api';
+import { type MediaKind } from '@/lib/whatsapp/meta-api';
 import {
   validateInteractivePayload,
   interactivePayloadPreviewText,
   type InteractiveMessagePayload,
 } from '@/lib/whatsapp/interactive';
-import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption';
+import { getProvider } from '@/lib/whatsapp/providers';
 import { supabaseAdmin } from '@/lib/flows/admin-client';
 import {
   sanitizePhoneForMeta,
@@ -262,22 +255,19 @@ export async function sendMessageToConversation(
     );
   }
 
-  const accessToken = decrypt(config.access_token);
+  // Pick the active provider for this account. The provider owns its
+  // own credential handling (the Meta provider decrypts + self-heals
+  // its access token). Everything below is provider-agnostic.
+  const provider = getProvider(config);
 
-  // Self-heal legacy CBC ciphertexts. Fire-and-forget; idempotent.
-  if (isLegacyFormat(config.access_token)) {
-    void db
-      .from('whatsapp_config')
-      .update({ access_token: encrypt(accessToken) })
-      .eq('id', config.id)
-      .then(({ error }: { error: { message: string } | null }) => {
-        if (error) {
-          console.warn(
-            '[send-message] access_token GCM upgrade failed:',
-            error.message
-          );
-        }
-      });
+  // Templates are a Meta-only concept — fail fast on providers that
+  // don't support them rather than deep in the retry loop.
+  if (messageType === 'template' && !provider.capabilities.templates) {
+    throw new SendMessageError(
+      'unsupported_for_provider',
+      `Templates are not supported by the ${provider.id} provider.`,
+      400
+    );
   }
 
   // Resolve the reply target to its Meta message_id. The parent must
@@ -329,11 +319,19 @@ export async function sendMessageToConversation(
     templateRow = data ?? null;
   }
 
+  const providerCtx = { config, db };
   const attempt = async (phone: string): Promise<string> => {
     if (messageType === 'template') {
-      const result = await sendTemplateMessage({
-        phoneNumberId: config.phone_number_id,
-        accessToken,
+      // Guarded above by capabilities.templates; the existence check
+      // narrows the optional method for TypeScript.
+      if (!provider.sendTemplate) {
+        throw new SendMessageError(
+          'unsupported_for_provider',
+          `Templates are not supported by the ${provider.id} provider.`,
+          400
+        );
+      }
+      const result = await provider.sendTemplate(providerCtx, {
         to: phone,
         templateName: templateName!,
         language: templateLanguage || 'en_US',
@@ -345,9 +343,7 @@ export async function sendMessageToConversation(
       return result.messageId;
     }
     if (isMediaKind) {
-      const result = await sendMediaMessage({
-        phoneNumberId: config.phone_number_id,
-        accessToken,
+      const result = await provider.sendMedia(providerCtx, {
         to: phone,
         kind: messageType as MediaKind,
         link: mediaUrl!,
@@ -358,36 +354,14 @@ export async function sendMessageToConversation(
       return result.messageId;
     }
     if (messageType === 'interactive') {
-      const p = interactivePayload!;
-      if (p.kind === 'buttons') {
-        const result = await sendInteractiveButtons({
-          phoneNumberId: config.phone_number_id,
-          accessToken,
-          to: phone,
-          bodyText: p.body,
-          headerText: p.header || undefined,
-          footerText: p.footer || undefined,
-          buttons: p.buttons,
-          contextMessageId,
-        });
-        return result.messageId;
-      }
-      const result = await sendInteractiveList({
-        phoneNumberId: config.phone_number_id,
-        accessToken,
+      const result = await provider.sendInteractive(providerCtx, {
         to: phone,
-        bodyText: p.body,
-        buttonLabel: p.button_label,
-        headerText: p.header || undefined,
-        footerText: p.footer || undefined,
-        sections: p.sections,
+        payload: interactivePayload!,
         contextMessageId,
       });
       return result.messageId;
     }
-    const result = await sendTextMessage({
-      phoneNumberId: config.phone_number_id,
-      accessToken,
+    const result = await provider.sendText(providerCtx, {
       to: phone,
       text: contentText!,
       contextMessageId,

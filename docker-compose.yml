@@ -1,0 +1,25 @@
+# waizor-v2 — image builder (NOT the runtime).
+#
+# This VPS runs Docker Swarm behind Traefik, so the app is deployed as a
+# Swarm service (see deploy/stack.yml), which cannot build images itself.
+# This compose file exists only to BUILD `waizor-v2:latest`, baking the
+# NEXT_PUBLIC_* values (Compose auto-loads `.env` and interpolates them
+# into the build args below).
+#
+#   docker compose build          # -> waizor-v2:latest
+#   docker stack deploy -c deploy/stack.yml waizor
+#
+# There is intentionally no `ports:` mapping — Traefik reaches the
+# container over the `minha_rede` overlay network, not via a host port.
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL}
+        NEXT_PUBLIC_APP_LOCALE: ${NEXT_PUBLIC_APP_LOCALE}
+    image: waizor-v2:latest

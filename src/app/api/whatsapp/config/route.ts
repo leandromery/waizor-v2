@@ -354,6 +354,10 @@ export async function POST(request: Request) {
     // store the credentials and the error so the UI can guide the
     // user through a retry.
     const baseRow = {
+      // Saving Meta credentials means this account uses the Meta provider
+      // — explicit so switching back from a prior UAZAPI setup takes
+      // effect (the provider discriminator drives send + inbound routing).
+      provider: 'meta',
       phone_number_id,
       waba_id: waba_id || null,
       access_token: encryptedAccessToken,

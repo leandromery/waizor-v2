@@ -266,13 +266,37 @@ export interface MessageReaction {
   created_at: string;
 }
 
+/** Which WhatsApp backend an account's config is wired to. */
+export type WhatsAppProviderId = 'meta' | 'uazapi';
+
 export interface WhatsAppConfig {
   id: string;
   user_id: string;
-  phone_number_id: string;
+  /** Tenancy key (migration 017). One config row per account. */
+  account_id?: string;
+  /**
+   * Active provider for this account. Defaults to 'meta' (migration
+   * 036) so pre-existing rows keep their exact current meaning.
+   */
+  provider: WhatsAppProviderId;
+  // --- Meta Cloud API (present when provider === 'meta') ---
+  // Nullable at the DB level since migration 036: a UAZAPI row has no
+  // Meta credentials. Presence is enforced per-provider in app code.
+  phone_number_id?: string;
   waba_id?: string;
-  access_token: string;
+  access_token?: string;
   verify_token?: string;
+  // --- UAZAPI (present when provider === 'uazapi') ---
+  /** Per-server host, e.g. https://xxx.uazapi.com */
+  uazapi_base_url?: string;
+  /** Instance identifier on the UAZAPI server. */
+  uazapi_instance_id?: string;
+  /** Encrypted instance token (same GCM helpers as access_token). */
+  uazapi_instance_token?: string;
+  /** 'disconnected' | 'connecting' | 'connected' */
+  uazapi_status?: 'disconnected' | 'connecting' | 'connected';
+  /** The paired phone number, once the QR scan completes. */
+  uazapi_wa_number?: string;
   status: 'connected' | 'disconnected';
   connected_at?: string;
   /**

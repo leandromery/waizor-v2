@@ -1,14 +1,10 @@
 import {
-  sendInteractiveButtons,
-  sendInteractiveList,
-  sendMediaMessage,
-  sendTextMessage,
   type InteractiveButton,
   type InteractiveListSection,
   type MediaKind,
 } from '@/lib/whatsapp/meta-api'
 import type { InteractiveMessagePayload } from '@/lib/whatsapp/interactive'
-import { decrypt } from '@/lib/whatsapp/encryption'
+import { getProvider } from '@/lib/whatsapp/providers'
 import {
   sanitizePhoneForMeta,
   isValidE164,
@@ -91,15 +87,11 @@ export async function engineSendText(
     throw new Error('WhatsApp not configured for this account')
   }
 
-  const accessToken = decrypt(config.access_token)
+  const provider = getProvider(config)
+  const ctx = { config, db }
 
   const attempt = async (phone: string): Promise<string> => {
-    const r = await sendTextMessage({
-      phoneNumberId: config.phone_number_id,
-      accessToken,
-      to: phone,
-      text: args.text,
-    })
+    const r = await provider.sendText(ctx, { to: phone, text: args.text })
     return r.messageId
   }
 
@@ -201,12 +193,11 @@ export async function engineSendMedia(
     throw new Error('WhatsApp not configured for this account')
   }
 
-  const accessToken = decrypt(config.access_token)
+  const provider = getProvider(config)
+  const ctx = { config, db }
 
   const attempt = async (phone: string): Promise<string> => {
-    const r = await sendMediaMessage({
-      phoneNumberId: config.phone_number_id,
-      accessToken,
+    const r = await provider.sendMedia(ctx, {
       to: phone,
       kind: args.kind,
       link: args.link,
@@ -353,30 +344,34 @@ async function sendInteractiveViaMeta(
     throw new Error('WhatsApp not configured for this account')
   }
 
-  const accessToken = decrypt(config.access_token)
+  const provider = getProvider(config)
+  const ctx = { config, db }
+
+  // Build the structured payload once — it drives both the send and
+  // the persisted `interactive_payload` (so the inbox re-renders the
+  // buttons/rows the bot sent).
+  const interactivePayload: InteractiveMessagePayload =
+    input.kind === 'buttons'
+      ? {
+          kind: 'buttons',
+          body: input.bodyText,
+          header: input.headerText,
+          footer: input.footerText,
+          buttons: input.buttons,
+        }
+      : {
+          kind: 'list',
+          body: input.bodyText,
+          header: input.headerText,
+          footer: input.footerText,
+          button_label: input.buttonLabel,
+          sections: input.sections,
+        }
 
   const attempt = async (phone: string): Promise<string> => {
-    if (input.kind === 'buttons') {
-      const r = await sendInteractiveButtons({
-        phoneNumberId: config.phone_number_id,
-        accessToken,
-        to: phone,
-        bodyText: input.bodyText,
-        buttons: input.buttons,
-        headerText: input.headerText,
-        footerText: input.footerText,
-      })
-      return r.messageId
-    }
-    const r = await sendInteractiveList({
-      phoneNumberId: config.phone_number_id,
-      accessToken,
+    const r = await provider.sendInteractive(ctx, {
       to: phone,
-      bodyText: input.bodyText,
-      buttonLabel: input.buttonLabel,
-      sections: input.sections,
-      headerText: input.headerText,
-      footerText: input.footerText,
+      payload: interactivePayload,
     })
     return r.messageId
   }
@@ -414,27 +409,9 @@ async function sendInteractiveViaMeta(
   //
   // We do NOT set interactive_reply_id here — that column is reserved
   // for the customer's tap on this message, populated by the webhook
-  // when their reply arrives. We DO persist the structured payload so
-  // the inbox thread re-renders the buttons/rows the bot sent (round-
-  // trip), matching the composer + automation send paths.
-  const interactivePayload: InteractiveMessagePayload =
-    input.kind === 'buttons'
-      ? {
-          kind: 'buttons',
-          body: input.bodyText,
-          header: input.headerText,
-          footer: input.footerText,
-          buttons: input.buttons,
-        }
-      : {
-          kind: 'list',
-          body: input.bodyText,
-          header: input.headerText,
-          footer: input.footerText,
-          button_label: input.buttonLabel,
-          sections: input.sections,
-        }
-
+  // when their reply arrives. We DO persist the structured payload
+  // (built above) so the inbox thread re-renders the buttons/rows the
+  // bot sent (round-trip), matching the composer + automation paths.
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: input.conversationId,
     sender_type: 'bot',

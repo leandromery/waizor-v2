@@ -29,7 +29,9 @@ import {
   AccordionTrigger,
   AccordionContent,
 } from '@/components/ui/accordion';
-import type { WhatsAppConfig as WhatsAppConfigType } from '@/types';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { UazapiConnect } from './uazapi-connect';
+import type { WhatsAppConfig as WhatsAppConfigType, WhatsAppProviderId } from '@/types';
 
 const MASKED_TOKEN = '••••••••••••••••';
 
@@ -52,6 +54,10 @@ export function WhatsAppConfig() {
   const [resetting, setResetting] = useState(false);
   const [showToken, setShowToken] = useState(false);
   const [config, setConfig] = useState<WhatsAppConfigType | null>(null);
+  // Which connection method the account uses. Drives the panel body:
+  // 'meta' shows the existing credential form; 'uazapi' shows the QR
+  // pairing panel. Seeded from the saved row, then user-switchable.
+  const [provider, setProvider] = useState<WhatsAppProviderId>('meta');
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('unknown');
   const [resetReason, setResetReason] = useState<ResetReason>(null);
   const [statusMessage, setStatusMessage] = useState<string>('');
@@ -115,6 +121,7 @@ export function WhatsAppConfig() {
 
       if (data) {
         setConfig(data);
+        setProvider(data.provider === 'uazapi' ? 'uazapi' : 'meta');
         setPhoneNumberId(data.phone_number_id || '');
         setWabaId(data.waba_id || '');
         setAccessToken(MASKED_TOKEN);
@@ -387,12 +394,68 @@ export function WhatsAppConfig() {
 
   const showResetBanner = resetReason === 'token_corrupted';
 
+  // Method picker shown above the panel body in both provider views.
+  // Switching is purely a view change here — persistence happens when the
+  // user saves Meta credentials or completes a UAZAPI QR pairing.
+  const providerSelector = (
+    <Card className="mb-6">
+      <CardHeader>
+        <CardTitle className="text-foreground text-base">{t('providerLabel')}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <RadioGroup
+          value={provider}
+          onValueChange={(v) => setProvider(v as WhatsAppProviderId)}
+          className="gap-3"
+        >
+          <label
+            htmlFor="provider-meta"
+            className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 hover:bg-accent/40"
+          >
+            <RadioGroupItem value="meta" id="provider-meta" className="mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-foreground">{t('providerMeta')}</p>
+              <p className="text-sm text-muted-foreground">{t('providerMetaDesc')}</p>
+            </div>
+          </label>
+          <label
+            htmlFor="provider-uazapi"
+            className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 hover:bg-accent/40"
+          >
+            <RadioGroupItem value="uazapi" id="provider-uazapi" className="mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-foreground">{t('providerUazapi')}</p>
+              <p className="text-sm text-muted-foreground">{t('providerUazapiDesc')}</p>
+            </div>
+          </label>
+        </RadioGroup>
+      </CardContent>
+    </Card>
+  );
+
+  if (provider === 'uazapi') {
+    return (
+      <section className="animate-in fade-in-50 duration-200">
+        <SettingsPanelHead title={t('title')} description={t('description')} />
+        {providerSelector}
+        <UazapiConnect
+          initialStatus={config?.uazapi_status}
+          initialWaNumber={config?.uazapi_wa_number}
+          onChange={() => {
+            if (accountId) fetchConfig(accountId);
+          }}
+        />
+      </section>
+    );
+  }
+
   return (
     <section className="animate-in fade-in-50 duration-200">
       <SettingsPanelHead
         title={t("title")}
         description={t("description")}
       />
+      {providerSelector}
       <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
       {/* Main config form */}
       <div className="space-y-6">
