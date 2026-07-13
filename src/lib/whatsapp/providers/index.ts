@@ -6,16 +6,14 @@
 import type { WhatsAppConfig } from '@/types'
 import type { WhatsAppProvider } from './types'
 import { metaProvider } from './meta'
+import { uazapiProvider } from './uazapi'
 
 export function getProvider(
   config: Pick<WhatsAppConfig, 'provider'>
 ): WhatsAppProvider {
   switch (config.provider) {
     case 'uazapi':
-      // Phase 2 — implemented once the UAZAPI vendor API is wired in.
-      throw new Error(
-        'UAZAPI provider is not yet available. Connect via Meta, or wait for the UAZAPI integration.'
-      )
+      return uazapiProvider
     case 'meta':
     default:
       return metaProvider

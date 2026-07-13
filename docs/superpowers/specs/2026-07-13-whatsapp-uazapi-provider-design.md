@@ -111,6 +111,31 @@ Driven by `provider.capabilities`, not scattered `if`s. Templates subsystem + br
 - **Phase 1 (no vendor docs needed):** migration, provider interface + registry, Meta wrapper, outbound routing, inbound-core extraction, settings selector + gating. Carries all the "don't break Meta" risk.
 - **Phase 2 (needs UAZAPI docs):** `providers/uazapi.ts` internals, connect/QR/status routes, UAZAPI webhook, UAZAPI QR UI.
 
+### Phase 2 — implemented (2026-07-13)
+
+Shipped: `uazapi-api.ts` (raw HTTP: send text/media/menu + instance
+create/connect/status/disconnect + webhook config), `providers/uazapi.ts`
+(adapter, wired into `getProvider`), `inbound/uazapi-normalize.ts`, the four
+routes under `/api/whatsapp/uazapi/` (connect, status, disconnect, webhook),
+and the Settings method-picker + `uazapi-connect.tsx` QR panel. Unit tests:
+`uazapi-api`, `uazapi-normalize`, `providers/uazapi`, `providers/index`,
+`uazapi-server`. `next build` + `tsc` clean.
+
+**Deviations from the plan (deliberate):**
+- **Server config is env-driven, not a user field.** `UAZAPI_SERVER_URL` +
+  `UAZAPI_ADMIN_TOKEN` live in env (the admin token wouldn't match an
+  arbitrary user-picked server anyway). The Settings UI is just a
+  method-picker + Connect, no free-text server box. The resolved base URL is
+  still persisted per-account on `uazapi_base_url`.
+- **Media is stored as UAZAPI's `fileURL` verbatim** (public, ~2-day
+  retention) — no proxy. Known limitation.
+- **Webhook has no HMAC** — resolved by instance id + `excludeMessages`.
+
+**Not done (follow-ups):** hiding the Templates/Broadcast UI for UAZAPI
+accounts. The *backend* already rejects templates on UAZAPI
+(send-message.ts capability guard) and broadcast is Meta-shaped, so nothing
+breaks — those UI surfaces just aren't gated/hidden yet.
+
 ## Phase 2 — concrete UAZAPI API mapping
 
 Source spec: `uazapiGO - WhatsApp API` v2.1.1 (local copy:
@@ -133,16 +158,20 @@ Auth headers: `admintoken` (create instance) and `token` (all per-instance ops).
 - `POST /send/media` — `{ number, type: image|video|document|audio|ptt, file (URL or
   base64), text (caption), docName }`.
 - `POST /send/menu` — `{ number, type: button|list, text, footerText, listButton,
-  choices[] }`. NOTE: `choices` are strings (`[Title]` marks list sections) with **no
-  per-option stable id** — map our button/row titles to choices; on reply the selected
-  id comes back as `buttonOrListid` (see inbound).
+  choices[] }`. **Correction (verified in spec):** `choices` DO carry a per-option
+  stable id. Button item = `"title|id"`; list item = `"title|id|description"` and
+  `"[Section]"` starts a section. So we encode our own button/row ids as `title|id`
+  and get them back verbatim: on reply the selected id comes in `buttonOrListid`.
 - Send response = `Message` schema + `{ response: { status, message } }`. Return
   `messageid` (original provider id) as our `messageId`.
 
-**Inbound** — `POST /webhook` (token) `{ action:'add', enabled:true, url, events:['message'] }`
-points UAZAPI at `/api/whatsapp/uazapi/webhook`. Event envelope `WebhookEvent`:
-`{ event: 'message'|'status'|..., instance: <id>, data: <Message> }`. Resolve the
-account by `instance` → `uazapi_instance_id`. `Message` → NormalizedInbound:
+**Inbound** — `POST /webhook` (token). **Correction:** the config `events` array uses
+the PLURAL names (`events: ['messages','connection']`, `excludeMessages:
+['wasSentByApi','isGroupYes']`); the *delivered* `WebhookEvent.event` field is the
+SINGULAR enum (`message|status|presence|group|connection`). Simple mode: omit
+`action`/`id` so UAZAPI manages one webhook per instance. Points UAZAPI at
+`/api/whatsapp/uazapi/webhook`. Envelope `{ event, instance: <id>, data: <Message> }`.
+Resolve the account by `instance` → `uazapi_instance_id`. `Message` → NormalizedInbound:
 
 | NormalizedInbound | UAZAPI `Message` field |
 |---|---|
@@ -161,10 +190,23 @@ account by `instance` → `uazapi_instance_id`. `Message` → NormalizedInbound:
 `isGroup === true` (CRM is 1:1) — Meta's webhook never delivered these; the UAZAPI
 normalizer/route must filter them before calling `processInboundMessage`.
 
-**Open confirmations for implementation**
-- Whether `replyid` / `quoted` use `id` (internal `r+hex`) or `messageid`; standardize
-  what we store in `messages.message_id` accordingly.
-- Webhook callback authentication (UAZAPI → us): confirm whether it signs requests or
-  we rely on the unguessable instance-scoped URL / a shared secret.
-- `fileURL` access: whether it needs the instance token to fetch (→ proxy like Meta) or
-  is publicly retrievable.
+**Resolved confirmations (verified against spec v2.1.1)**
+- **ID format:** `Message.id` = internal `r+hex`; `Message.messageid` = the WhatsApp
+  provider id. Outbound `replyid` takes the provider-id format (spec example
+  `3EB0538DA65A59F6D8A251`). Decision: **store `messageid` in `messages.message_id`**
+  (matches the Meta wamid convention), send `replyid` = that stored id, and map inbound
+  `quoted` → `replyToProviderMessageId`. (Residual: `quoted`'s exact format isn't
+  spelled out; we treat it as a provider id for lookup consistency with Meta.)
+- **Connection shapes:** `POST /instance/create` (admintoken) → `{ instance: Instance,
+  token }`; persist `instance.id` + encrypt `instance.token`. `POST /instance/connect`
+  (token) → `{ instance: Instance }` with `instance.qrcode` (base64, `data:image/png…`)
+  + `instance.paircode`. `GET /instance/status` (token) → `{ instance: Instance }` with
+  `status` enum `disconnected|connecting|connected|hibernated`, `profileName`, `owner`.
+- **Webhook auth:** no request signing is documented (`security: token:[]` only guards
+  calls *to* UAZAPI). Decision: resolve the account by `instance` and **ignore (200)**
+  any unknown instance; rely on the unguessable instance-scoped id + configure
+  `excludeMessages: ['wasSentByApi']` to stop echo loops. (Known limitation — no HMAC.)
+- **`fileURL`:** `/message/download`'s `return_link` returns a **public URL** (no token),
+  so inbound `Message.fileURL` is publicly retrievable. Decision: **store `fileURL`
+  directly** (no Meta-style proxy). Known limitation: UAZAPI storage retains media ~2
+  days, after which the link 404s — acceptable for v1.
