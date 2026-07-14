@@ -106,13 +106,13 @@ export async function POST(request: Request) {
       console.error('[uazapi/connect] createInstance failed:', message)
       return NextResponse.json(
         { error: `UAZAPI rejected the request: ${message}` },
-        { status: 502 },
+        { status: 400 },
       )
     }
     if (!inst.token) {
       return NextResponse.json(
         { error: 'UAZAPI did not return an instance token.' },
-        { status: 502 },
+        { status: 400 },
       )
     }
     instanceId = inst.id
@@ -172,7 +172,7 @@ export async function POST(request: Request) {
     console.error('[uazapi/connect] connectInstance failed:', message)
     return NextResponse.json(
       { error: `UAZAPI rejected the request: ${message}` },
-      { status: 502 },
+      { status: 400 },
     )
   }
   return NextResponse.json({
