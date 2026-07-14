@@ -441,6 +441,8 @@ export function WhatsAppConfig() {
         <UazapiConnect
           initialStatus={config?.uazapi_status}
           initialWaNumber={config?.uazapi_wa_number}
+          initialBaseUrl={config?.uazapi_base_url}
+          hasSavedToken={!!config?.uazapi_admin_token}
           onChange={() => {
             if (accountId) fetchConfig(accountId);
           }}
