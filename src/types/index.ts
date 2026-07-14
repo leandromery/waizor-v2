@@ -293,6 +293,8 @@ export interface WhatsAppConfig {
   uazapi_instance_id?: string;
   /** Encrypted instance token (same GCM helpers as access_token). */
   uazapi_instance_token?: string;
+  /** UAZAPI server admin token, encrypted (per-account, mints instances). */
+  uazapi_admin_token?: string;
   /** 'disconnected' | 'connecting' | 'connected' */
   uazapi_status?: 'disconnected' | 'connecting' | 'connected';
   /** The paired phone number, once the QR scan completes. */
