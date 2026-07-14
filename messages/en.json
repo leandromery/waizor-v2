@@ -1489,7 +1489,6 @@
       "providerUazapiDesc": "Unofficial, session-based. Connect by scanning a QR code — no Meta app required. No message templates or broadcasts.",
       "uazapiTitle": "Connect by QR code",
       "uazapiDesc": "Scan the QR code with WhatsApp on your phone (Settings → Linked devices) to pair this account.",
-      "uazapiConnect": "Connect",
       "uazapiConnecting": "Starting…",
       "uazapiScanHint": "Open WhatsApp → Linked devices → Link a device, then scan this code.",
       "uazapiWaitingScan": "Waiting for you to scan…",
@@ -1499,15 +1498,13 @@
       "uazapiDisconnect": "Disconnect",
       "uazapiDisconnecting": "Disconnecting…",
       "uazapiConnectFailed": "Could not start the connection. Try again.",
-      "uazapiNotConfigured": "UAZAPI is not configured on this server.",
       "uazapiSwitchWarning": "Switching connection method replaces your current WhatsApp setup for this account.",
       "uazapiServerUrlLabel": "UAZAPI server URL",
       "uazapiServerUrlPlaceholder": "https://your-subdomain.uazapi.com",
       "uazapiAdminTokenLabel": "Admin token",
       "uazapiAdminTokenHint": "Server-level token used to create this account's instance. Stored encrypted.",
       "uazapiSaveAndConnect": "Save & Connect",
-      "uazapiServerRequired": "Enter the server URL and admin token first.",
-      "uazapiEditServer": "Change server"
+      "uazapiServerRequired": "Enter the server URL and admin token first."
     },
     "sections": {
       "overview": "Overview",
