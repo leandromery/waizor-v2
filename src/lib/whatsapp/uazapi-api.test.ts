@@ -8,6 +8,7 @@ import {
   getInstanceStatus,
   disconnectInstance,
   configureWebhook,
+  downloadMessage,
 } from "./uazapi-api";
 
 // Capture the request each helper makes so we can assert the exact URL,
@@ -163,6 +164,22 @@ describe("uazapi-api — instance lifecycle", () => {
     expect(captured?.url).toBe("https://x.uazapi.com/instance/disconnect");
     expect(captured?.method).toBe("POST");
     expect(captured?.headers.token).toBe("inst-token");
+  });
+
+  it("downloadMessage POSTs /message/download with return_link and returns the fileURL", async () => {
+    vi.stubGlobal("fetch", okFetch({ fileURL: "https://cdn.uazapi.com/a.ogg", mimetype: "audio/ogg" }));
+    const res = await downloadMessage({ ...BASE, id: "3B53DA9CB4CB3D17928F" });
+    expect(captured?.url).toBe("https://x.uazapi.com/message/download");
+    expect(captured?.method).toBe("POST");
+    expect(captured?.headers.token).toBe("inst-token");
+    expect(captured?.body).toEqual({ id: "3B53DA9CB4CB3D17928F", return_link: true });
+    expect(res.fileURL).toBe("https://cdn.uazapi.com/a.ogg");
+  });
+
+  it("downloadMessage returns null fileURL when absent", async () => {
+    vi.stubGlobal("fetch", okFetch({ mimetype: "audio/ogg" }));
+    const res = await downloadMessage({ ...BASE, id: "X" });
+    expect(res.fileURL).toBeNull();
   });
 
   it("configureWebhook POSTs /webhook enabled with url, plural events, and excludeMessages", async () => {

@@ -1,6 +1,8 @@
 import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { processInboundMessage } from '@/lib/whatsapp/inbound/process'
+import { decrypt } from '@/lib/whatsapp/encryption'
+import { downloadMessage } from '@/lib/whatsapp/uazapi-api'
 import {
   normalizeUazapiMessage,
   type UazapiMessage,
@@ -79,15 +81,8 @@ function accountIdFromInstanceName(instanceName: string | undefined): string | n
 async function processUazapiEvent(body: UazapiWebhookEvent): Promise<void> {
   if (body.EventType !== 'messages' || !body.message) return
 
-  // TEMP DEBUG: dump non-text message payloads so we can map media (audio,
-  // image, …) fields correctly — the text webhook didn't reveal them.
-  if (body.message.type && body.message.type !== 'text') {
-    console.log('[uazapi/webhook] non-text message:', JSON.stringify(body.message))
-  }
-
-  // Drop our own sends / group chats before any DB work.
-  const normalized = normalizeUazapiMessage(body.message)
-  if (!normalized) return
+  // Cheap pre-filter (our own sends / groups) before any DB or media work.
+  if (body.message.fromMe || body.message.isGroup) return
 
   const accountId = accountIdFromInstanceName(body.instanceName)
   if (!accountId) {
@@ -95,10 +90,11 @@ async function processUazapiEvent(body: UazapiWebhookEvent): Promise<void> {
     return
   }
 
-  // Confirm the account exists and is on the UAZAPI provider.
+  // Confirm the account exists and is on the UAZAPI provider; also grab the
+  // server URL + instance token so we can resolve media.
   const { data: config, error } = await supabaseAdmin()
     .from('whatsapp_config')
-    .select('account_id, user_id, provider')
+    .select('account_id, user_id, provider, uazapi_base_url, uazapi_instance_token')
     .eq('account_id', accountId)
     .maybeSingle()
 
@@ -110,6 +106,31 @@ async function processUazapiEvent(body: UazapiWebhookEvent): Promise<void> {
     console.warn('[uazapi/webhook] no UAZAPI config for account:', accountId)
     return
   }
+
+  // Media resolver: UAZAPI's webhook only carries an encrypted CDN URL, so
+  // media messages are resolved to a usable public URL via /message/download.
+  // Best-effort — a download failure lands the message without media rather
+  // than dropping it.
+  let resolveMedia: ((id: string) => Promise<string | null>) | undefined
+  if (config.uazapi_base_url && config.uazapi_instance_token) {
+    const baseUrl = config.uazapi_base_url as string
+    const token = decrypt(config.uazapi_instance_token as string)
+    resolveMedia = async (id: string) => {
+      try {
+        const { fileURL } = await downloadMessage({ baseUrl, token, id })
+        return fileURL
+      } catch (err) {
+        console.warn(
+          '[uazapi/webhook] media download failed:',
+          err instanceof Error ? err.message : err,
+        )
+        return null
+      }
+    }
+  }
+
+  const normalized = await normalizeUazapiMessage(body.message, resolveMedia)
+  if (!normalized) return
 
   await processInboundMessage(
     normalized,
