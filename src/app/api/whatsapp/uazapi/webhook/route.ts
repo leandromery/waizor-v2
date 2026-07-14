@@ -79,6 +79,12 @@ function accountIdFromInstanceName(instanceName: string | undefined): string | n
 async function processUazapiEvent(body: UazapiWebhookEvent): Promise<void> {
   if (body.EventType !== 'messages' || !body.message) return
 
+  // TEMP DEBUG: dump non-text message payloads so we can map media (audio,
+  // image, …) fields correctly — the text webhook didn't reveal them.
+  if (body.message.type && body.message.type !== 'text') {
+    console.log('[uazapi/webhook] non-text message:', JSON.stringify(body.message))
+  }
+
   // Drop our own sends / group chats before any DB work.
   const normalized = normalizeUazapiMessage(body.message)
   if (!normalized) return
