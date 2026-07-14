@@ -91,11 +91,24 @@ export async function POST(request: Request) {
     instanceId = existing.uazapi_instance_id
     instanceToken = decrypt(existing.uazapi_instance_token)
   } else {
-    const inst = await createInstance({
-      baseUrl,
-      adminToken,
-      name: `waizor-${accountId}`,
-    })
+    let inst
+    try {
+      inst = await createInstance({
+        baseUrl,
+        adminToken,
+        name: `waizor-${accountId}`,
+      })
+    } catch (err) {
+      // Surface the UAZAPI error (e.g. "Invalid AdminToken Header") to the
+      // user instead of an opaque 500 — this is almost always a wrong admin
+      // token or server URL, which only the account admin can fix.
+      const message = err instanceof Error ? err.message : 'UAZAPI instance creation failed.'
+      console.error('[uazapi/connect] createInstance failed:', message)
+      return NextResponse.json(
+        { error: `UAZAPI rejected the request: ${message}` },
+        { status: 502 },
+      )
+    }
     if (!inst.token) {
       return NextResponse.json(
         { error: 'UAZAPI did not return an instance token.' },
@@ -151,7 +164,17 @@ export async function POST(request: Request) {
     )
   }
 
-  const connected = await connectInstance({ baseUrl, token: instanceToken })
+  let connected
+  try {
+    connected = await connectInstance({ baseUrl, token: instanceToken })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'UAZAPI connect failed.'
+    console.error('[uazapi/connect] connectInstance failed:', message)
+    return NextResponse.json(
+      { error: `UAZAPI rejected the request: ${message}` },
+      { status: 502 },
+    )
+  }
   return NextResponse.json({
     qrCode: connected.qrcode ?? null,
     paircode: connected.paircode ?? null,
