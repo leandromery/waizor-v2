@@ -165,7 +165,7 @@ describe("uazapi-api — instance lifecycle", () => {
     expect(captured?.headers.token).toBe("inst-token");
   });
 
-  it("configureWebhook POSTs /webhook with url, plural events, and excludeMessages", async () => {
+  it("configureWebhook POSTs /webhook enabled with url, plural events, and excludeMessages", async () => {
     vi.stubGlobal("fetch", okFetch({}));
     await configureWebhook({
       ...BASE,
@@ -174,7 +174,10 @@ describe("uazapi-api — instance lifecycle", () => {
       excludeMessages: ["wasSentByApi"],
     });
     expect(captured?.url).toBe("https://x.uazapi.com/webhook");
+    // enabled:true is REQUIRED — UAZAPI's webhook `enabled` defaults to false,
+    // so omitting it registers a disabled webhook that never delivers.
     expect(captured?.body).toEqual({
+      enabled: true,
       url: "https://app/api/whatsapp/uazapi/webhook",
       events: ["messages", "connection"],
       excludeMessages: ["wasSentByApi"],

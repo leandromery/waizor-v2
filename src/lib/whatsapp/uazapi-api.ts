@@ -267,7 +267,10 @@ export interface ConfigureWebhookArgs extends UazapiInstanceContext {
 
 export async function configureWebhook(args: ConfigureWebhookArgs): Promise<void> {
   const { baseUrl, token, url, events, excludeMessages } = args
-  const body: Record<string, unknown> = { url, events }
+  // `enabled: true` is required — UAZAPI's webhook `enabled` field defaults
+  // to false, so omitting it registers a DISABLED webhook that silently
+  // never delivers inbound events.
+  const body: Record<string, unknown> = { enabled: true, url, events }
   if (excludeMessages) body.excludeMessages = excludeMessages
   await uazapiFetch<unknown>({
     baseUrl,
