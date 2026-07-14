@@ -5,47 +5,53 @@ import { toast } from 'sonner';
 import { useTranslations } from 'next-intl';
 import { CheckCircle2, Loader2, QrCode, RefreshCw, Smartphone } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 
 type UazapiStatus = 'disconnected' | 'connecting' | 'connected';
 
+const MASKED_TOKEN = '••••••••••••••••';
+
 interface UazapiConnectProps {
-  /** Persisted status from the loaded whatsapp_config row. */
   initialStatus?: UazapiStatus;
-  /** Paired number from the loaded row, if already connected. */
   initialWaNumber?: string | null;
-  /** Called after a successful connect/disconnect so the parent can reload. */
+  initialBaseUrl?: string | null;
+  hasSavedToken?: boolean;
   onChange?: () => void;
 }
 
-// Poll the live instance status this often while a pairing is in flight.
 const STATUS_POLL_MS = 3000;
-// UAZAPI QR codes expire after ~2 min; refresh well before that.
 const QR_REFRESH_MS = 45000;
 
-/** Normalize UAZAPI's qrcode field into a usable <img> src. */
 function toQrSrc(qr: string): string {
   return qr.startsWith('data:') ? qr : `data:image/png;base64,${qr}`;
 }
 
 /**
- * UAZAPI QR pairing panel. Self-contained: owns the connect → poll →
- * connected/disconnect lifecycle and talks only to /api/whatsapp/uazapi/*.
- * The Meta form is untouched; this renders in its place when the account's
- * provider is 'uazapi'.
+ * UAZAPI QR pairing panel with per-account server config. Owns the
+ * server-fields → save+connect → poll → connected/disconnect lifecycle,
+ * talking only to /api/whatsapp/uazapi/*.
  */
-export function UazapiConnect({ initialStatus, initialWaNumber, onChange }: UazapiConnectProps) {
+export function UazapiConnect({
+  initialStatus,
+  initialWaNumber,
+  initialBaseUrl,
+  hasSavedToken,
+  onChange,
+}: UazapiConnectProps) {
   const t = useTranslations('Settings.whatsapp');
 
   const [status, setStatus] = useState<UazapiStatus>(initialStatus ?? 'disconnected');
   const [qrCode, setQrCode] = useState<string | null>(null);
   const [waNumber, setWaNumber] = useState<string | null>(initialWaNumber ?? null);
+  const [baseUrl, setBaseUrl] = useState(initialBaseUrl ?? '');
+  // Masked when a token is already saved; the user only re-enters it to change it.
+  const [adminToken, setAdminToken] = useState(hasSavedToken ? MASKED_TOKEN : '');
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
 
-  // Timers for the two independent loops (status poll + QR refresh). Kept
-  // in refs so the cleanup effect can clear whatever is live.
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const qrTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -56,58 +62,70 @@ export function UazapiConnect({ initialStatus, initialWaNumber, onChange }: Uaza
     qrTimerRef.current = null;
   }, []);
 
-  // Clear timers on unmount.
   useEffect(() => stopLoops, [stopLoops]);
 
   const startConnect = useCallback(async (): Promise<boolean> => {
-    const res = await fetch('/api/whatsapp/uazapi/connect', { method: 'POST' });
-    const payload = await res.json().catch(() => ({}));
+    // Send credentials only when the user provided/changed them. A masked
+    // token means "use the stored one" — never round-trip the secret.
+    const payload: { baseUrl?: string; adminToken?: string } = {};
+    if (baseUrl.trim()) payload.baseUrl = baseUrl.trim();
+    if (adminToken && adminToken !== MASKED_TOKEN) payload.adminToken = adminToken;
+
+    const res = await fetch('/api/whatsapp/uazapi/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      toast.error(payload?.error || t('uazapiConnectFailed'));
+      toast.error(data?.error || t('uazapiConnectFailed'));
       return false;
     }
-    setQrCode(payload.qrCode ?? null);
+    setQrCode(data.qrCode ?? null);
     setStatus('connecting');
     return true;
-  }, [t]);
+  }, [baseUrl, adminToken, t]);
 
   const pollStatus = useCallback(async () => {
     const res = await fetch('/api/whatsapp/uazapi/status');
     if (!res.ok) return;
-    const payload = await res.json().catch(() => ({}));
-    if (payload.status === 'connected') {
+    const data = await res.json().catch(() => ({}));
+    if (data.status === 'connected') {
       stopLoops();
       setStatus('connected');
-      setWaNumber(payload.waNumber ?? null);
+      setWaNumber(data.waNumber ?? null);
       setQrCode(null);
       onChange?.();
     }
   }, [stopLoops, onChange]);
 
   const handleConnect = useCallback(async () => {
+    // Require both fields when nothing is saved yet.
+    if (!baseUrl.trim() || (!hasSavedToken && (!adminToken || adminToken === MASKED_TOKEN))) {
+      toast.error(t('uazapiServerRequired'));
+      return;
+    }
     setConnecting(true);
     try {
       const ok = await startConnect();
       if (!ok) return;
       stopLoops();
-      // Loop 1: poll for the pairing to complete.
       pollRef.current = setInterval(pollStatus, STATUS_POLL_MS);
-      // Loop 2: refresh the (short-lived) QR until connected.
       qrTimerRef.current = setInterval(() => {
         void startConnect();
       }, QR_REFRESH_MS);
     } finally {
       setConnecting(false);
     }
-  }, [startConnect, pollStatus, stopLoops]);
+  }, [baseUrl, adminToken, hasSavedToken, startConnect, pollStatus, stopLoops, t]);
 
   const handleDisconnect = useCallback(async () => {
     setDisconnecting(true);
     try {
       const res = await fetch('/api/whatsapp/uazapi/disconnect', { method: 'POST' });
       if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        toast.error(payload?.error || 'Failed to disconnect.');
+        const data = await res.json().catch(() => ({}));
+        toast.error(data?.error || 'Failed to disconnect.');
         return;
       }
       stopLoops();
@@ -151,12 +169,9 @@ export function UazapiConnect({ initialStatus, initialWaNumber, onChange }: Uaza
             <div className="flex-1">
               <p className="text-sm text-muted-foreground">{t('uazapiConnectedNumber')}</p>
               <p className="text-foreground font-medium">{waNumber || '—'}</p>
+              {baseUrl ? <p className="text-xs text-muted-foreground mt-1">{baseUrl}</p> : null}
             </div>
-            <Button
-              variant="outline"
-              onClick={handleDisconnect}
-              disabled={disconnecting}
-            >
+            <Button variant="outline" onClick={handleDisconnect} disabled={disconnecting}>
               {disconnecting ? (
                 <>
                   <Loader2 className="size-4 animate-spin" />
@@ -169,6 +184,34 @@ export function UazapiConnect({ initialStatus, initialWaNumber, onChange }: Uaza
           </div>
         ) : (
           <>
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="uazapi-base-url">{t('uazapiServerUrlLabel')}</Label>
+                <Input
+                  id="uazapi-base-url"
+                  value={baseUrl}
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                  placeholder={t('uazapiServerUrlPlaceholder')}
+                  autoComplete="off"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="uazapi-admin-token">{t('uazapiAdminTokenLabel')}</Label>
+                <Input
+                  id="uazapi-admin-token"
+                  type="password"
+                  value={adminToken}
+                  onFocus={() => {
+                    if (adminToken === MASKED_TOKEN) setAdminToken('');
+                  }}
+                  onChange={(e) => setAdminToken(e.target.value)}
+                  placeholder="••••••••"
+                  autoComplete="off"
+                />
+                <p className="text-xs text-muted-foreground">{t('uazapiAdminTokenHint')}</p>
+              </div>
+            </div>
+
             {qrCode ? (
               <div className="flex flex-col items-center gap-3 py-2">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -186,8 +229,7 @@ export function UazapiConnect({ initialStatus, initialWaNumber, onChange }: Uaza
                 </Button>
               </div>
             ) : (
-              <div className="flex flex-col items-center gap-4 py-6">
-                <QrCode className="size-12 text-muted-foreground" />
+              <div className="flex justify-center py-2">
                 <Button onClick={handleConnect} disabled={connecting}>
                   {connecting ? (
                     <>
@@ -197,7 +239,7 @@ export function UazapiConnect({ initialStatus, initialWaNumber, onChange }: Uaza
                   ) : (
                     <>
                       <QrCode className="size-4" />
-                      {t('uazapiConnect')}
+                      {t('uazapiSaveAndConnect')}
                     </>
                   )}
                 </Button>

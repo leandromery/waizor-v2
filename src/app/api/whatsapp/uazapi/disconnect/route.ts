@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getCurrentAccount, toErrorResponse } from '@/lib/auth/account'
+import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import { disconnectInstance } from '@/lib/whatsapp/uazapi-api'
 
@@ -13,7 +13,7 @@ import { disconnectInstance } from '@/lib/whatsapp/uazapi-api'
  */
 export async function POST() {
   try {
-    const { supabase, accountId } = await getCurrentAccount()
+    const { supabase, accountId } = await requireRole('admin')
 
     const { data: config } = await supabase
       .from('whatsapp_config')
