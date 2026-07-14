@@ -191,11 +191,17 @@ export default function InboxPage() {
 
       const { data } = await supabase
         .from("whatsapp_config")
-        .select("status")
+        .select("provider, status, uazapi_status")
         .eq("account_id", accountId)
         .maybeSingle();
 
-      setWhatsappConnected(data?.status === "connected");
+      // Connection lives in a different column per provider: Meta uses
+      // `status`, UAZAPI uses `uazapi_status`.
+      const connected =
+        data?.provider === "uazapi"
+          ? data?.uazapi_status === "connected"
+          : data?.status === "connected";
+      setWhatsappConnected(connected);
     };
 
     checkConnection();
