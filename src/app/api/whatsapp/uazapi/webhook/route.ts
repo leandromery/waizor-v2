@@ -52,20 +52,27 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  // TEMP DEBUG: log the envelope shape so we can confirm UAZAPI is calling
-  // us and what event name / message shape it actually sends.
-  console.log(
-    '[uazapi/webhook] envelope:',
-    JSON.stringify({
-      event: body?.event,
-      instance: body?.instance,
-      topKeys: body ? Object.keys(body) : null,
-      dataKeys: body?.data ? Object.keys(body.data) : null,
-      messageType: body?.data?.messageType,
-      fromMe: body?.data?.fromMe,
-      isGroup: body?.data?.isGroup,
-    }),
-  )
+  // TEMP DEBUG: the real UAZAPI envelope differs from the spec — dump the
+  // full message object (for message events) so we can map it correctly.
+  const raw = body as unknown as Record<string, unknown>
+  if (raw?.message) {
+    console.log(
+      '[uazapi/webhook] MESSAGE event:',
+      JSON.stringify({
+        EventType: raw.EventType,
+        instanceName: raw.instanceName,
+        owner: raw.owner,
+        chatSource: raw.chatSource,
+        message: raw.message,
+        chat: raw.chat,
+      }),
+    )
+  } else {
+    console.log(
+      '[uazapi/webhook] non-message event:',
+      JSON.stringify({ EventType: raw?.EventType, topKeys: raw ? Object.keys(raw) : null }),
+    )
+  }
 
   // Process after the response so we ack UAZAPI promptly (a slow ack
   // triggers retries + duplicate inserts) while the work still runs to
