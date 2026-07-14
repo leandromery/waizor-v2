@@ -52,6 +52,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
+  // TEMP DEBUG: log the envelope shape so we can confirm UAZAPI is calling
+  // us and what event name / message shape it actually sends.
+  console.log(
+    '[uazapi/webhook] envelope:',
+    JSON.stringify({
+      event: body?.event,
+      instance: body?.instance,
+      topKeys: body ? Object.keys(body) : null,
+      dataKeys: body?.data ? Object.keys(body.data) : null,
+      messageType: body?.data?.messageType,
+      fromMe: body?.data?.fromMe,
+      isGroup: body?.data?.isGroup,
+    }),
+  )
+
   // Process after the response so we ack UAZAPI promptly (a slow ack
   // triggers retries + duplicate inserts) while the work still runs to
   // completion under the runtime — same rationale as the Meta route.
