@@ -1,30 +1,30 @@
-import { describe, it, expect, afterEach, vi } from "vitest";
-import { resolveUazapiServer, uazapiWebhookUrl } from "./uazapi-server";
+import { describe, it, expect } from "vitest";
+import { normalizeUazapiBaseUrl, uazapiWebhookUrl } from "./uazapi-server";
 
-describe("resolveUazapiServer", () => {
-  afterEach(() => vi.unstubAllEnvs());
-
-  it("returns the trimmed base url (no trailing slash) and admin token", () => {
-    vi.stubEnv("UAZAPI_SERVER_URL", "https://x.uazapi.com/");
-    vi.stubEnv("UAZAPI_ADMIN_TOKEN", "ADMIN");
-    expect(resolveUazapiServer()).toEqual({ baseUrl: "https://x.uazapi.com", adminToken: "ADMIN" });
+describe("normalizeUazapiBaseUrl", () => {
+  it("trims and strips a trailing slash", () => {
+    expect(normalizeUazapiBaseUrl("  https://x.uazapi.com/  ")).toBe("https://x.uazapi.com");
   });
 
-  it("throws when the server url is missing", () => {
-    vi.stubEnv("UAZAPI_SERVER_URL", "");
-    vi.stubEnv("UAZAPI_ADMIN_TOKEN", "ADMIN");
-    expect(() => resolveUazapiServer()).toThrow(/UAZAPI_SERVER_URL/);
+  it("keeps a path-less https url unchanged", () => {
+    expect(normalizeUazapiBaseUrl("https://x.uazapi.com")).toBe("https://x.uazapi.com");
   });
 
-  it("throws when the admin token is missing", () => {
-    vi.stubEnv("UAZAPI_SERVER_URL", "https://x.uazapi.com");
-    vi.stubEnv("UAZAPI_ADMIN_TOKEN", "");
-    expect(() => resolveUazapiServer()).toThrow(/UAZAPI_ADMIN_TOKEN/);
+  it("rejects an empty value", () => {
+    expect(() => normalizeUazapiBaseUrl("")).toThrow(/required/i);
+  });
+
+  it("rejects a non-https url", () => {
+    expect(() => normalizeUazapiBaseUrl("http://x.uazapi.com")).toThrow(/https/i);
+  });
+
+  it("rejects a non-url string", () => {
+    expect(() => normalizeUazapiBaseUrl("not a url")).toThrow(/valid/i);
   });
 });
 
 describe("uazapiWebhookUrl", () => {
-  it("builds the inbound webhook url from the site url, collapsing a trailing slash", () => {
+  it("builds the inbound webhook url, collapsing a trailing slash", () => {
     expect(uazapiWebhookUrl("https://v2.waizor.com.br/")).toBe(
       "https://v2.waizor.com.br/api/whatsapp/uazapi/webhook",
     );

@@ -1,38 +1,35 @@
 /**
- * Server-level UAZAPI configuration.
+ * UAZAPI server helpers.
  *
- * Unlike Meta (where every credential is per-account and user-supplied),
- * UAZAPI has a server the whole deployment talks to: a base URL and an
- * `admintoken` used once to mint each account's instance. Both are
- * operator secrets, so they live in env — an account never picks an
- * arbitrary server (the admin token wouldn't match it anyway). The
- * per-instance token minted from this server IS stored per-account
- * (encrypted) on whatsapp_config.uazapi_instance_token.
+ * The UAZAPI server (base URL + admin token) is configured per-account
+ * now, not via deployment env — so the credential resolution lives in the
+ * connect route against the account's whatsapp_config row. This module
+ * keeps two pure helpers: validating a user-entered base URL, and building
+ * OUR inbound webhook callback URL.
  */
-
-export interface UazapiServer {
-  baseUrl: string
-  adminToken: string
-}
 
 /**
- * Read the deployment's UAZAPI server config from env. Throws a
- * user-actionable error when unset so the connect route can surface
- * "UAZAPI isn't configured on this server" rather than a vague 500.
+ * Normalize a user-entered UAZAPI base URL: trim, require an https URL,
+ * strip trailing slashes. Throws a user-actionable Error otherwise.
  */
-export function resolveUazapiServer(): UazapiServer {
-  const baseUrl = process.env.UAZAPI_SERVER_URL?.trim().replace(/\/+$/, '')
-  const adminToken = process.env.UAZAPI_ADMIN_TOKEN?.trim()
-  if (!baseUrl) {
-    throw new Error('UAZAPI is not configured: UAZAPI_SERVER_URL is not set.')
+export function normalizeUazapiBaseUrl(input: string): string {
+  const trimmed = input?.trim() ?? '';
+  if (!trimmed) {
+    throw new Error('UAZAPI server URL is required.');
   }
-  if (!adminToken) {
-    throw new Error('UAZAPI is not configured: UAZAPI_ADMIN_TOKEN is not set.')
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error('UAZAPI server URL is not a valid URL.');
   }
-  return { baseUrl, adminToken }
+  if (parsed.protocol !== 'https:') {
+    throw new Error('UAZAPI server URL must start with https://.');
+  }
+  return trimmed.replace(/\/+$/, '');
 }
 
 /** Build the inbound webhook callback URL UAZAPI should POST events to. */
 export function uazapiWebhookUrl(siteUrl: string): string {
-  return `${siteUrl.replace(/\/+$/, '')}/api/whatsapp/uazapi/webhook`
+  return `${siteUrl.replace(/\/+$/, '')}/api/whatsapp/uazapi/webhook`;
 }
