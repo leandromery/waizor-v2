@@ -1500,7 +1500,14 @@
       "uazapiDisconnecting": "Disconnecting…",
       "uazapiConnectFailed": "Could not start the connection. Try again.",
       "uazapiNotConfigured": "UAZAPI is not configured on this server.",
-      "uazapiSwitchWarning": "Switching connection method replaces your current WhatsApp setup for this account."
+      "uazapiSwitchWarning": "Switching connection method replaces your current WhatsApp setup for this account.",
+      "uazapiServerUrlLabel": "UAZAPI server URL",
+      "uazapiServerUrlPlaceholder": "https://your-subdomain.uazapi.com",
+      "uazapiAdminTokenLabel": "Admin token",
+      "uazapiAdminTokenHint": "Server-level token used to create this account's instance. Stored encrypted.",
+      "uazapiSaveAndConnect": "Save & Connect",
+      "uazapiServerRequired": "Enter the server URL and admin token first.",
+      "uazapiEditServer": "Change server"
     },
     "sections": {
       "overview": "Overview",
