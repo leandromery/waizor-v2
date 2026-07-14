@@ -254,6 +254,35 @@ export async function disconnectInstance(args: UazapiInstanceContext): Promise<v
 }
 
 // ============================================================
+// Media download (resolve inbound media to a usable public URL)
+// ============================================================
+
+export interface DownloadMessageArgs extends UazapiInstanceContext {
+  /** The message's provider id (`messageid`). */
+  id: string
+}
+
+/**
+ * Resolve an inbound media message to a public URL. UAZAPI delivers media
+ * in the webhook only as an ENCRYPTED WhatsApp CDN URL (`.enc` + mediaKey),
+ * which isn't directly playable — this endpoint returns a decrypted, public
+ * `fileURL` (retained ~2 days on UAZAPI storage).
+ */
+export async function downloadMessage(
+  args: DownloadMessageArgs
+): Promise<{ fileURL: string | null }> {
+  const { baseUrl, token, id } = args
+  const data = await uazapiFetch<{ fileURL?: string }>({
+    baseUrl,
+    path: '/message/download',
+    authHeader: 'token',
+    authValue: token,
+    body: { id, return_link: true },
+  })
+  return { fileURL: data.fileURL ?? null }
+}
+
+// ============================================================
 // Webhook configuration (point UAZAPI at our inbound route)
 // ============================================================
 

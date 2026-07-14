@@ -40,16 +40,27 @@ export interface UazapiMessage {
   /** Unix milliseconds. */
   messageTimestamp: number
   text?: string
-  content?: string
   /** Provider id of the quoted message ("" when none). */
   quoted?: string
   /** Provider id of the reacted-to message ("" when none). */
   reaction?: string
   /** Selected button/list option id ("" when none). */
   buttonOrListid?: string
-  /** Already-public media URL. */
-  fileURL?: string
+  /**
+   * Raw content. A string for text, but an OBJECT (encrypted CDN URL +
+   * mediaKey) for media — so we never read it directly; media is resolved
+   * out-of-band via the download callback.
+   */
+  content?: unknown
 }
+
+/** Content types that carry downloadable media. */
+const MEDIA_TYPES = new Set<NormalizedContentType>([
+  'image',
+  'video',
+  'audio',
+  'document',
+])
 
 /** Coerce UAZAPI's empty-string "absent" markers to null. */
 function nz(v: string | undefined): string | null {
@@ -86,10 +97,16 @@ function stripJid(jid: string): string {
 /**
  * Normalize one UAZAPI inbound message. Returns null when the message must
  * be ignored (our own send, or a group message).
+ *
+ * `resolveMedia` fetches a usable media URL for a message id (UAZAPI's
+ * webhook only carries an encrypted CDN URL, so media is resolved via
+ * `/message/download`). It's optional — omitted, media messages arrive with
+ * a null `mediaUrl`.
  */
-export function normalizeUazapiMessage(
-  message: UazapiMessage
-): NormalizedInbound | null {
+export async function normalizeUazapiMessage(
+  message: UazapiMessage,
+  resolveMedia?: (messageId: string) => Promise<string | null>
+): Promise<NormalizedInbound | null> {
   if (message.fromMe || message.isGroup) return null
 
   const contentType = classify(message)
@@ -98,6 +115,11 @@ export function normalizeUazapiMessage(
   const phoneJid = message.sender_pn || message.chatid || message.sender
   const reactionId = nz(message.reaction)
 
+  const mediaUrl =
+    MEDIA_TYPES.has(contentType) && resolveMedia
+      ? await resolveMedia(message.messageid)
+      : null
+
   return {
     providerMessageId: message.messageid,
     fromPhone: normalizePhone(stripJid(phoneJid)),
@@ -105,8 +127,8 @@ export function normalizeUazapiMessage(
     timestampSeconds: Math.floor(message.messageTimestamp / 1000),
     typeLabel: contentType,
     contentType,
-    contentText: nz(message.text) ?? nz(message.content),
-    mediaUrl: nz(message.fileURL),
+    contentText: nz(message.text),
+    mediaUrl,
     interactiveReplyId: nz(message.buttonOrListid),
     replyToProviderMessageId: nz(message.quoted),
     reaction: reactionId
