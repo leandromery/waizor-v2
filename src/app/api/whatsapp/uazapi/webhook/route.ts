@@ -9,18 +9,20 @@ import {
 /**
  * UAZAPI inbound webhook.
  *
- * UAZAPI POSTs events here as `{ event, instance, data }`. We only act on
- * `message` events; everything else (status, presence, …) is acked and
- * ignored for v1.
+ * The real UAZAPI envelope is `{ EventType, instanceName, message, ... }`
+ * (NOT the spec's `{ event, instance, data }`). We act only on `messages`
+ * events; everything else (connection, presence, …) is acked and ignored.
  *
- * Auth model: UAZAPI does not sign its callbacks, so we authenticate by
- * resolving the account from the `instance` id (which is an unguessable,
- * per-account UAZAPI identifier) and ignore any unknown instance. See the
- * design spec's "Resolved confirmations" for why this is acceptable for
- * v1 (defence-in-depth `excludeMessages: ['wasSentByApi']` is set at
- * connect time). We resolve with the service-role client because there's
- * no user session on an inbound webhook.
+ * Auth / tenancy: UAZAPI does not sign its callbacks and the message event
+ * carries no instance id — only `instanceName`, which we mint as
+ * `waizor-<accountId>`. We resolve the owning account by parsing that
+ * accountId out of `instanceName` (an unguessable UUID) and loading its
+ * UAZAPI config with the service-role client (no user session on a
+ * webhook). Unknown/non-UAZAPI accounts are ignored. Defence-in-depth:
+ * `excludeMessages: ['wasSentByApi']` is set at connect time.
  */
+
+const INSTANCE_NAME_PREFIX = 'waizor-'
 
 // Lazy service-role client — mirrors the Meta webhook route. RLS can't
 // scope an unauthenticated webhook, so we resolve tenancy explicitly.
@@ -39,9 +41,10 @@ function supabaseAdmin() {
 }
 
 interface UazapiWebhookEvent {
-  event?: string
-  instance?: string
-  data?: UazapiMessage
+  EventType?: string
+  /** `waizor-<accountId>` — the instance name we set on create. */
+  instanceName?: string
+  message?: UazapiMessage
 }
 
 export async function POST(request: Request) {
@@ -50,28 +53,6 @@ export async function POST(request: Request) {
     body = await request.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
-  }
-
-  // TEMP DEBUG: the real UAZAPI envelope differs from the spec — dump the
-  // full message object (for message events) so we can map it correctly.
-  const raw = body as unknown as Record<string, unknown>
-  if (raw?.message) {
-    console.log(
-      '[uazapi/webhook] MESSAGE event:',
-      JSON.stringify({
-        EventType: raw.EventType,
-        instanceName: raw.instanceName,
-        owner: raw.owner,
-        chatSource: raw.chatSource,
-        message: raw.message,
-        chat: raw.chat,
-      }),
-    )
-  } else {
-    console.log(
-      '[uazapi/webhook] non-message event:',
-      JSON.stringify({ EventType: raw?.EventType, topKeys: raw ? Object.keys(raw) : null }),
-    )
   }
 
   // Process after the response so we ack UAZAPI promptly (a slow ack
@@ -88,18 +69,31 @@ export async function POST(request: Request) {
   return NextResponse.json({ status: 'received' }, { status: 200 })
 }
 
+/** Extract the account id we embedded in `waizor-<accountId>`. */
+function accountIdFromInstanceName(instanceName: string | undefined): string | null {
+  if (!instanceName || !instanceName.startsWith(INSTANCE_NAME_PREFIX)) return null
+  const id = instanceName.slice(INSTANCE_NAME_PREFIX.length)
+  return id.length > 0 ? id : null
+}
+
 async function processUazapiEvent(body: UazapiWebhookEvent): Promise<void> {
-  if (body.event !== 'message' || !body.instance || !body.data) return
+  if (body.EventType !== 'messages' || !body.message) return
 
   // Drop our own sends / group chats before any DB work.
-  const normalized = normalizeUazapiMessage(body.data)
+  const normalized = normalizeUazapiMessage(body.message)
   if (!normalized) return
 
-  // Resolve the owning account by instance id. Unknown instance → ignore.
+  const accountId = accountIdFromInstanceName(body.instanceName)
+  if (!accountId) {
+    console.warn('[uazapi/webhook] could not resolve account from instanceName:', body.instanceName)
+    return
+  }
+
+  // Confirm the account exists and is on the UAZAPI provider.
   const { data: config, error } = await supabaseAdmin()
     .from('whatsapp_config')
     .select('account_id, user_id, provider')
-    .eq('uazapi_instance_id', body.instance)
+    .eq('account_id', accountId)
     .maybeSingle()
 
   if (error) {
@@ -107,7 +101,7 @@ async function processUazapiEvent(body: UazapiWebhookEvent): Promise<void> {
     return
   }
   if (!config || config.provider !== 'uazapi') {
-    console.warn('[uazapi/webhook] no UAZAPI config for instance:', body.instance)
+    console.warn('[uazapi/webhook] no UAZAPI config for account:', accountId)
     return
   }
 
