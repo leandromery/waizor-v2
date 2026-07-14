@@ -26,6 +26,14 @@ echo "==> Deploying the Swarm service..."
 set -a; . ./.env; set +a
 docker stack deploy -c deploy/stack.yml waizor
 
+# `docker stack deploy` compares the service spec, not the image contents.
+# Because the tag (waizor-v2:latest) is textually unchanged, Swarm sees
+# "no change" and does NOT recreate the task — so a freshly rebuilt image
+# is never promoted and the old container keeps running. Force a recreate
+# with the just-built local :latest; start-first keeps it zero-downtime.
+echo "==> Forcing the service to pick up the freshly built image..."
+docker service update --force --update-order start-first waizor_app
+
 echo "==> Pruning dangling images..."
 docker image prune -f
 
