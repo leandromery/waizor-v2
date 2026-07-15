@@ -51,23 +51,48 @@ export async function POST(request: Request) {
     .eq('account_id', accountId)
     .maybeSingle()
 
-  // Resolve server credentials: a full body (url + token) wins and can
-  // change the server; otherwise fall back to the stored, encrypted pair.
-  let baseUrl: string
-  let adminToken: string
-  if (bodyBaseUrl && bodyAdminToken) {
+  // Validate a body-supplied URL up front (also lets us detect a change).
+  let normalizedBodyUrl: string | null = null
+  if (bodyBaseUrl) {
     try {
-      baseUrl = normalizeUazapiBaseUrl(bodyBaseUrl)
+      normalizedBodyUrl = normalizeUazapiBaseUrl(bodyBaseUrl)
     } catch (err) {
       return NextResponse.json(
         { error: err instanceof Error ? err.message : 'Invalid UAZAPI server URL.' },
         { status: 400 },
       )
     }
+  }
+
+  const storedUrl = existing?.uazapi_base_url ?? null
+  const storedToken = existing?.uazapi_admin_token ?? null
+  // The URL field is prefilled, so it's sent on every reconnect; a change
+  // is only real when it differs from what's stored.
+  const urlChanged = !!normalizedBodyUrl && normalizedBodyUrl !== storedUrl
+
+  // Resolve server credentials:
+  //  - a token in the body (re)configures the server (new setup / change);
+  //  - a changed URL without a token can't authenticate → ask for it (F2);
+  //  - otherwise reuse the stored, encrypted pair (reconnect / QR refresh).
+  let baseUrl: string
+  let adminToken: string
+  if (bodyAdminToken) {
+    baseUrl = normalizedBodyUrl ?? storedUrl ?? ''
+    if (!baseUrl) {
+      return NextResponse.json(
+        { error: "Configure this account's UAZAPI server URL." },
+        { status: 400 },
+      )
+    }
     adminToken = bodyAdminToken
-  } else if (existing?.uazapi_base_url && existing?.uazapi_admin_token) {
-    baseUrl = existing.uazapi_base_url
-    adminToken = decrypt(existing.uazapi_admin_token)
+  } else if (urlChanged) {
+    return NextResponse.json(
+      { error: 'Changing the UAZAPI server also requires its admin token.' },
+      { status: 400 },
+    )
+  } else if (storedUrl && storedToken) {
+    baseUrl = storedUrl
+    adminToken = decrypt(storedToken)
   } else {
     return NextResponse.json(
       { error: "Configure this account's UAZAPI server (base URL + admin token) first." },
@@ -75,12 +100,9 @@ export async function POST(request: Request) {
     )
   }
 
-  // Mint a new instance on first setup or when the server changed;
-  // otherwise reuse the stored instance and just refresh its QR.
-  const serverChanged =
-    !!bodyBaseUrl &&
-    !!existing?.uazapi_base_url &&
-    existing.uazapi_base_url !== baseUrl
+  // Mint a new instance on first setup or when the server changed; otherwise
+  // reuse the stored instance and just refresh its QR.
+  const serverChanged = urlChanged
   let instanceId: string
   let instanceToken: string
   if (
