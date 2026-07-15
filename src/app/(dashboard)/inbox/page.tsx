@@ -40,6 +40,9 @@ export default function InboxPage() {
   const [whatsappConnected, setWhatsappConnected] = useState<boolean | null>(
     null
   );
+  // UAZAPI has no Meta 24h customer-service window, so the composer's
+  // session gate must not apply to it.
+  const [isUazapi, setIsUazapi] = useState(false);
   /**
    * Bumped whenever we want children (ConversationList, MessageThread)
    * to refetch from the DB — used as a safety net against missed
@@ -202,6 +205,7 @@ export default function InboxPage() {
           ? data?.uazapi_status === "connected"
           : data?.status === "connected";
       setWhatsappConnected(connected);
+      setIsUazapi(data?.provider === "uazapi");
     };
 
     checkConnection();
@@ -618,6 +622,7 @@ export default function InboxPage() {
             onRefresh={handleManualRefresh}
             contactPanelOpen={contactPanelOpen}
             onToggleContactPanel={handleToggleContactPanel}
+            enforceSessionWindow={!isUazapi}
           />
         </div>
 
