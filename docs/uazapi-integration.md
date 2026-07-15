@@ -77,9 +77,10 @@ The connect route mints an instance named `waizor-<accountId>`, stores its id
 and force-rolls the Swarm service (the `:latest` tag alone won't trigger a
 rollout — see [the deploy memory / DEPLOY.md]).
 
-## Known follow-up (F2)
+## Server-URL changes
 
-Changing only the server URL while leaving the admin-token field masked
-silently reuses the previously stored server (the connect route only takes
-body creds when both baseUrl and adminToken are present). Consider returning
-a 400 asking for the token when the URL changes.
+Changing the server URL requires re-entering the admin token — the connect
+route returns a 400 ("Changing the UAZAPI server also requires its admin
+token") when the URL differs from what's stored but the token field is left
+masked. An unchanged URL with a masked token is a normal reconnect and
+reuses the stored token.
